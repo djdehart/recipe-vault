@@ -25,7 +25,6 @@ exports.handler = async function (event) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid URL" }) };
   }
 
-  // Step 1: Fetch the page
   let pageText = "";
   let imageUrl = "";
   try {
@@ -36,7 +35,6 @@ exports.handler = async function (event) {
     pageText = "";
   }
 
-  // Step 2: Call Claude API server-side
   const prompt = `Extract the recipe from this webpage (URL: ${url}) and return ONLY valid JSON with no markdown or explanation:
 {
   "title": "Recipe name",
@@ -75,7 +73,8 @@ ${pageText ? "Webpage text:\n" + pageText : "Note: page could not be fetched. Us
     } catch {}
 
     return {
-      statusCode: 200, headers,
+      statusCode: 200,
+      headers,
       body: JSON.stringify({
         success: true,
         image: imageUrl,
@@ -101,7 +100,8 @@ ${pageText ? "Webpage text:\n" + pageText : "Note: page could not be fetched. Us
     };
   } catch (err) {
     return {
-      statusCode: 200, headers,
+      statusCode: 200,
+      headers,
       body: JSON.stringify({ success: false, error: err.message })
     };
   }
@@ -164,6 +164,7 @@ function callClaude(prompt) {
       headers: {
         "Content-Type": "application/json",
         "Content-Length": Buffer.byteLength(body),
+        "x-api-key": process.env.ANTHROPIC_API_KEY || "",
         "anthropic-version": "2023-06-01",
       }
     }, (res) => {
@@ -173,10 +174,10 @@ function callClaude(prompt) {
         try {
           const parsed = JSON.parse(data);
           const text = parsed?.content?.[0]?.text || "";
-          if (!text) return reject(new Error("Empty AI response"));
+          if (!text) return reject(new Error("Empty AI response: " + JSON.stringify(parsed)));
           resolve(text);
         } catch (e) {
-          reject(new Error("Failed to parse AI response"));
+          reject(new Error("Failed to parse AI response: " + data.slice(0, 200)));
         }
       });
     });
