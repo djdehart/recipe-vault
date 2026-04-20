@@ -370,21 +370,49 @@ function triggerHeroImagePicker(){
   document.getElementById('heroImagePicker').click();
 }
 
+function applyImageToRecipe(base64, id){
+  const idx=recipes.findIndex(r=>r.id===id);
+  if(idx===-1)return;
+  recipes[idx].image=base64;
+  save();
+
+  // Directly patch the card image in the grid (fast, reliable on iPad)
+  const grid=document.getElementById('grid');
+  const cards=grid.querySelectorAll('.card');
+  cards.forEach(card=>{
+    if(card.getAttribute('onclick')&&card.getAttribute('onclick').includes(id)){
+      const imgWrap=card.querySelector('.card-img');
+      if(imgWrap){
+        // Remove placeholder if present
+        const placeholder=imgWrap.querySelector('.card-placeholder');
+        if(placeholder)placeholder.remove();
+        // Update or insert the img tag
+        let img=imgWrap.querySelector('img');
+        if(img){
+          img.src=base64;
+        } else {
+          img=document.createElement('img');
+          img.alt=recipes[idx].title||'';
+          img.src=base64;
+          img.onerror=function(){this.style.display='none';};
+          imgWrap.insertBefore(img,imgWrap.firstChild);
+        }
+      }
+    }
+  });
+
+  // Also update the hero in the detail view
+  renderDetail(id);
+}
+
 function handleHeroImageFile(event){
   const file=event.target.files[0];
   if(!file||!currentDetailId)return;
   if(!file.type.startsWith('image/')){toast('Please select an image file','error');return;}
   const reader=new FileReader();
   reader.onload=ev=>{
-    const base64=ev.target.result;
-    const idx=recipes.findIndex(r=>r.id===currentDetailId);
-    if(idx!==-1){
-      recipes[idx].image=base64;
-      save();
-      render();
-      renderDetail(currentDetailId);
-      toast('Image saved! ✓','success');
-    }
+    applyImageToRecipe(ev.target.result, currentDetailId);
+    toast('Image saved! ✓','success');
   };
   reader.readAsDataURL(file);
   event.target.value=''; // reset so same file can be re-selected
@@ -402,15 +430,8 @@ document.addEventListener('paste',function(ev){
       if(!file)return;
       const reader=new FileReader();
       reader.onload=ev2=>{
-        const base64=ev2.target.result;
-        const idx=recipes.findIndex(r=>r.id===currentDetailId);
-        if(idx!==-1){
-          recipes[idx].image=base64;
-          save();
-          render();
-          renderDetail(currentDetailId);
-          toast('Image pasted! ✓','success');
-        }
+        applyImageToRecipe(ev2.target.result, currentDetailId);
+        toast('Image pasted! ✓','success');
       };
       reader.readAsDataURL(file);
       break;
