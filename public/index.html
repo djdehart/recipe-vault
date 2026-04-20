@@ -105,12 +105,28 @@ body{background:var(--bg);color:var(--text);font-family:'Outfit',sans-serif;font
 .prog-bar{height:100%;background:var(--accent);border-radius:8px;transition:width .3s;width:0}
 .prog-label{font-size:11px;color:var(--text3);text-align:center}
 .detail-modal{max-width:700px}
+
+/* ── Hero image area with paste/upload support ── */
 .detail-hero{height:195px;background:var(--surface2);position:relative;border-radius:18px 18px 0 0;overflow:hidden;display:flex;align-items:center;justify-content:center}
 .detail-hero img{width:100%;height:100%;object-fit:cover}
 .detail-hero-placeholder{font-size:54px;opacity:.14}
 .hero-overlay{position:absolute;inset:0;background:linear-gradient(to top,rgba(42,34,24,.65) 0%,transparent 55%)}
 .hero-title{position:absolute;bottom:13px;left:18px;right:55px;font-family:'Lora',serif;font-size:19px;font-weight:700;color:#fff;line-height:1.3;text-shadow:0 1px 4px rgba(0,0,0,.4)}
 .hero-close{position:absolute;top:10px;right:10px;background:rgba(255,255,255,.9);border:none;border-radius:8px;width:29px;height:29px;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center}
+
+/* Image change button — always visible in bottom-left of hero */
+.hero-img-btn{position:absolute;bottom:10px;right:10px;background:rgba(255,255,255,.92);border:none;border-radius:8px;padding:5px 9px;font-size:12px;font-weight:500;color:var(--text);cursor:pointer;display:flex;align-items:center;gap:4px;z-index:2;transition:background .15s}
+.hero-img-btn:hover{background:#fff}
+
+/* Dan's Comments section */
+.dans-comments-section{margin-bottom:16px}
+.dans-comments-label{font-family:'Lora',serif;font-size:15px;font-weight:600;color:var(--text);margin-bottom:9px;display:flex;align-items:center;gap:6px}
+.dans-comments-textarea{width:100%;background:#fef9ec;border:1.5px solid #f0d98a;border-radius:10px;padding:11px 13px;font-family:'Outfit',sans-serif;font-size:14px;color:var(--text);outline:none;resize:vertical;min-height:90px;line-height:1.6;transition:border-color .15s}
+.dans-comments-textarea:focus{border-color:var(--accent);background:#fffdf4}
+.dans-comments-textarea::placeholder{color:var(--text3);font-style:italic}
+.dans-comments-saved{font-size:11px;color:#166534;margin-top:4px;opacity:0;transition:opacity .3s}
+.dans-comments-saved.show{opacity:1}
+
 .detail-body{padding:15px 20px 22px}
 .detail-meta{display:flex;flex-wrap:wrap;gap:12px;padding-bottom:11px;border-bottom:1px solid var(--border);margin-bottom:11px}
 .meta-item{font-size:13px;color:var(--text2);display:flex;align-items:center;gap:4px}
@@ -151,6 +167,7 @@ body{background:var(--bg);color:var(--text);font-family:'Outfit',sans-serif;font
     <button class="btn btn-primary" onclick="openAdd()">＋ Add Recipe</button>
   </div>
 </header>
+
 <div class="app-body">
   <aside class="sidebar">
     <div class="search-wrap">
@@ -167,6 +184,7 @@ body{background:var(--bg);color:var(--text);font-family:'Outfit',sans-serif;font
     <button class="clear-link" onclick="clearFilters()">✕ Clear all filters</button>
     <div class="sidebar-footer"><div style="font-size:11px;color:var(--text3);line-height:1.5">Backup your recipes occasionally using the button above.</div></div>
   </aside>
+
   <main class="main">
     <div class="main-top"><h2 id="mainHeading">All Recipes</h2><span class="results-note" id="resultsNote"></span></div>
     <div class="proc-banner hidden" id="procBanner">
@@ -253,13 +271,20 @@ body{background:var(--bg);color:var(--text);font-family:'Outfit',sans-serif;font
   </div>
 </div>
 
+<!-- Hidden file input for image upload -->
+<input type="file" id="heroImagePicker" accept="image/*" style="display:none" onchange="handleHeroImageFile(event)">
+
 <div class="toast toast-default" id="toast"></div>
 
 <script>
 const STORE='recipeVault_v3';
 let recipes=[];
 let filters={methods:null,proteins:null,cuisines:null,diets:null,mainIngredients:null,types:null,websites:null};
+let currentDetailId=null;
+let commentSaveTimer=null;
+
 try{recipes=JSON.parse(localStorage.getItem(STORE)||'[]');}catch{}
+
 function save(){localStorage.setItem(STORE,JSON.stringify(recipes));}
 
 function computeStatus(r){
@@ -321,7 +346,6 @@ function buildChips(){
 
 function toggleFilter(key,val){filters[key]=filters[key]===val?null:val;render();}
 function clearFilters(){Object.keys(filters).forEach(k=>filters[k]=null);document.getElementById('searchInput').value='';render();}
-
 function openAdd(){document.getElementById('addOverlay').classList.remove('hidden');}
 function closeAdd(){
   document.getElementById('addOverlay').classList.add('hidden');
@@ -336,111 +360,148 @@ function switchTab(name,btn){
   btn.classList.add('on');
   document.getElementById('pane-'+name).classList.add('on');
 }
-function openDetail(id){renderDetail(id);document.getElementById('detailOverlay').classList.remove('hidden');}
-function closeDetail(){document.getElementById('detailOverlay').classList.add('hidden');}
+
+function openDetail(id){currentDetailId=id;renderDetail(id);document.getElementById('detailOverlay').classList.remove('hidden');}
+function closeDetail(){document.getElementById('detailOverlay').classList.add('hidden');currentDetailId=null;}
+
+// ── IMAGE HANDLING ──────────────────────────────────────────────────────────
+
+function triggerHeroImagePicker(){
+  document.getElementById('heroImagePicker').click();
+}
+
+function handleHeroImageFile(event){
+  const file=event.target.files[0];
+  if(!file||!currentDetailId)return;
+  if(!file.type.startsWith('image/')){toast('Please select an image file','error');return;}
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const base64=ev.target.result;
+    const idx=recipes.findIndex(r=>r.id===currentDetailId);
+    if(idx!==-1){
+      recipes[idx].image=base64;
+      save();
+      render();
+      renderDetail(currentDetailId);
+      toast('Image saved! ✓','success');
+    }
+  };
+  reader.readAsDataURL(file);
+  event.target.value=''; // reset so same file can be re-selected
+}
+
+// Paste image from clipboard (Ctrl+V / Command+V when detail is open)
+document.addEventListener('paste',function(ev){
+  if(!currentDetailId)return;
+  const items=ev.clipboardData?.items;
+  if(!items)return;
+  for(const item of items){
+    if(item.type.startsWith('image/')){
+      ev.preventDefault();
+      const file=item.getAsFile();
+      if(!file)return;
+      const reader=new FileReader();
+      reader.onload=ev2=>{
+        const base64=ev2.target.result;
+        const idx=recipes.findIndex(r=>r.id===currentDetailId);
+        if(idx!==-1){
+          recipes[idx].image=base64;
+          save();
+          render();
+          renderDetail(currentDetailId);
+          toast('Image pasted! ✓','success');
+        }
+      };
+      reader.readAsDataURL(file);
+      break;
+    }
+  }
+});
+
+// ── DAN'S COMMENTS ──────────────────────────────────────────────────────────
+
+function onCommentInput(id){
+  clearTimeout(commentSaveTimer);
+  commentSaveTimer=setTimeout(()=>saveComment(id),800);
+}
+
+function saveComment(id){
+  const ta=document.getElementById('dans-comments-ta');
+  if(!ta)return;
+  const idx=recipes.findIndex(r=>r.id===id);
+  if(idx!==-1){
+    recipes[idx].danComments=ta.value;
+    save();
+    const saved=document.getElementById('dans-comments-saved');
+    if(saved){saved.classList.add('show');setTimeout(()=>saved.classList.remove('show'),2000);}
+  }
+}
+
+// ── DETAIL RENDER ───────────────────────────────────────────────────────────
 
 async function fetchRecipe(url){
   const res=await fetch('/api/fetch-recipe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
   if(!res.ok)throw new Error('Function call failed');
   const data=await res.json();
   if(!data.success)throw new Error(data.error||'Failed');
-  return{id:genId(),url,image:data.image||'',title:data.title||urlToTitle(url),description:data.description||'',servings:data.servings||'',prepTime:data.prepTime||'',cookTime:data.cookTime||'',totalTime:data.totalTime||'',difficulty:data.difficulty||'',ingredients:data.ingredients||[],instructions:data.instructions||[],notes:data.notes||'',tags:{methods:[],proteins:[],cuisines:[],diets:[],mainIngredients:[],types:[],...(data.tags||{})},addedAt:new Date().toISOString(),status:'done'};
-}
-
-async function addSingle(){
-  const url=document.getElementById('singleUrl').value.trim();
-  if(!url.startsWith('http')){toast('Please enter a valid URL','error');return;}
-  if(recipes.find(r=>r.url===url)){toast('Already in your vault','error');return;}
-  closeAdd();await processUrls([url]);
-}
-
-function queueBulk(){
-  const urls=extractUrls(document.getElementById('bulkText').value).filter(u=>!recipes.find(r=>r.url===u));
-  if(!urls.length){toast('No new valid URLs found','error');return;}
-  renderUrlQueue('bulkQueue',urls);
-  document.getElementById('bulkQueueWrap').style.display='block';
-  document.getElementById('bulkFetchBtn').textContent=`🚀 Fetch All ${urls.length} Recipes`;
-  document.getElementById('bulkFetchBtn').dataset.urls=JSON.stringify(urls);
-}
-async function processBulk(){const urls=JSON.parse(document.getElementById('bulkFetchBtn').dataset.urls||'[]');closeAdd();await processUrls(urls);}
-
-function handleBmFile(e){
-  const file=e.target.files[0];if(!file)return;
-  const reader=new FileReader();
-  reader.onload=ev=>{
-    const html=ev.target.result;
-    const matches=[...html.matchAll(/href=["'](https?:\/\/[^"'#\s>]+)["']/gi)];
-    const urls=[...new Set(matches.map(m=>m[1]))].filter(u=>!u.includes('apple.com')&&!u.includes('icloud.com')&&!u.includes('google.com')).filter(u=>!recipes.find(r=>r.url===u));
-    if(!urls.length){toast('No new URLs found','error');return;}
-    renderUrlQueue('importQueue',urls);
-    document.getElementById('importQueueWrap').style.display='block';
-    document.getElementById('importFetchBtn').textContent=`🚀 Import All ${urls.length} Recipes`;
-    document.getElementById('importFetchBtn').dataset.urls=JSON.stringify(urls);
-    toast(`Found ${urls.length} URLs`);
-  };
-  reader.readAsText(file);
-}
-async function processImport(){const urls=JSON.parse(document.getElementById('importFetchBtn').dataset.urls||'[]');closeAdd();await processUrls(urls);}
-
-async function saveManual(){
-  const title=document.getElementById('manualTitle').value.trim();
-  if(!title){toast('Please enter a title','error');return;}
-  const url=document.getElementById('manualUrl').value.trim();
-  const type=document.getElementById('manualType').value;
-  const ingredients=document.getElementById('manualIngredients').value.trim().split('\n').map(s=>s.trim()).filter(Boolean);
-  const instructions=document.getElementById('manualInstructions').value.trim().split('\n').map(s=>s.trim()).filter(Boolean);
-  const notes=document.getElementById('manualNotes').value.trim();
-  closeAdd();toast('Saving and tagging…');
-  let tags={methods:[],proteins:[],cuisines:[],diets:[],mainIngredients:[],types:type?[type]:[]};
-  try{
-    const res=await fetch('/api/fetch-recipe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url||null,manualText:`Title: ${title}\nIngredients: ${ingredients.join(', ')}\nInstructions: ${instructions.join('. ')}`,manual:true})});
-    if(res.ok){const data=await res.json();if(data.tags){tags={...tags,...data.tags};if(type)tags.types=[type,...(tags.types||[]).filter(t=>t!==type)];}}
-  }catch{}
-  const recipe={id:genId(),url:url||'',image:'',title,description:'',servings:'',prepTime:'',cookTime:'',totalTime:'',difficulty:'',ingredients,instructions,notes,tags,addedAt:new Date().toISOString(),status:'done',manual:true};
-  recipes.unshift(recipe);save();render();toast('Recipe saved! ✓','success');
-}
-
-async function processUrls(urls){
-  if(!urls.length)return;
-  let ok=0,fail=0,partial=0;
-  const total=urls.length;
-  const banner=document.getElementById('procBanner');
-  banner.classList.remove('hidden');
-  document.getElementById('summaryBanner').classList.add('hidden');
-  const placeholders=urls.map(url=>({id:genId(),url,title:urlToTitle(url),status:'processing',tags:{methods:[],proteins:[],cuisines:[],diets:[],mainIngredients:[],types:[]},addedAt:new Date().toISOString()}));
-  recipes=[...placeholders,...recipes];save();render();
-  for(let i=0;i<urls.length;i++){
-    const url=urls[i],ph=placeholders[i];
-    const pct=Math.round(((i+1)/total)*100);
-    document.getElementById('procText').textContent=`Fetching ${i+1} of ${total}…`;
-    document.getElementById('procBar').style.width=pct+'%';
-    document.getElementById('procCount').textContent=`✅ ${ok}  ⚠️ ${partial}  ❌ ${fail}`;
-    try{
-      const recipe=await fetchRecipe(url);recipe.id=ph.id;
-      const idx=recipes.findIndex(r=>r.id===ph.id);
-      if(idx!==-1){recipes[idx]=recipe;const s=computeStatus(recipe);if(s==='done')ok++;else if(s==='partial')partial++;else fail++;}
-    }catch{const idx=recipes.findIndex(r=>r.id===ph.id);if(idx!==-1){recipes[idx].status='error';fail++;}}
-    save();render();await sleep(300);
-  }
-  banner.classList.add('hidden');
-  const sb=document.getElementById('summaryBanner'),st=document.getElementById('summaryText');
-  if(fail===0&&partial===0){sb.className='summary-banner summary-ok';st.textContent=`✅ All ${ok} recipes saved successfully!`;}
-  else{sb.className='summary-banner summary-mixed';st.textContent=`✅ ${ok} saved  ⚠️ ${partial} partial  ❌ ${fail} failed — tap any card to retry or enter manually`;}
-  sb.classList.remove('hidden');
+  return{id:genId(),url,image:data.image||'',title:data.title||urlToTitle(url),description:data.description||'',servings:data.servings||'',prepTime:data.prepTime||'',cookTime:data.cookTime||'',totalTime:data.totalTime||'',difficulty:data.difficulty||'',ingredients:data.ingredients||[],instructions:data.instructions||[],notes:data.notes||'',danComments:'',tags:{methods:[],proteins:[],cuisines:[],diets:[],mainIngredients:[],types:[],...(data.tags||{})},addedAt:new Date().toISOString(),status:'done'};
 }
 
 function renderDetail(id){
   const r=recipes.find(x=>x.id===id);if(!r)return;
   const status=computeStatus(r);
+
+  // ── Hero ──
   const hero=document.getElementById('detailHero');
-  hero.innerHTML=`${r.image?`<img src="${e(r.image)}" alt="${e(r.title)}" onerror="this.style.display='none'">`:`<div class="detail-hero-placeholder">🍽</div>`}<div class="hero-overlay"></div><div class="hero-title">${e(r.title||'Untitled Recipe')}</div><button class="hero-close" onclick="closeDetail()">✕</button>`;
+  const imgHtml=r.image
+    ?`<img src="${e(r.image)}" alt="${e(r.title)}" onerror="this.style.display='none'">`
+    :`<div class="detail-hero-placeholder">🍽</div>`;
+  hero.innerHTML=`
+    ${imgHtml}
+    <div class="hero-overlay"></div>
+    <div class="hero-title">${e(r.title||'Untitled Recipe')}</div>
+    <button class="hero-close" onclick="closeDetail()">✕</button>
+    <button class="hero-img-btn" onclick="triggerHeroImagePicker()" title="Change image">
+      📷 ${r.image?'Change photo':'Add photo'}
+    </button>`;
+
+  // ── Body ──
   const allTags=[...(r.tags?.methods||[]).map(t=>`<span class="tag tm">${e(t)}</span>`),...(r.tags?.proteins||[]).map(t=>`<span class="tag tp">${e(t)}</span>`),...(r.tags?.cuisines||[]).map(t=>`<span class="tag tc">${e(t)}</span>`),...(r.tags?.diets||[]).map(t=>`<span class="tag td">${e(t)}</span>`),...(r.tags?.types||[]).map(t=>`<span class="tag tt">${e(t)}</span>`),...(r.tags?.mainIngredients||[]).map(t=>`<span class="tag ti">${e(t)}</span>`)].join('');
   const meta=[r.prepTime?`<span class="meta-item">⏱ Prep: ${e(r.prepTime)}</span>`:'',r.cookTime?`<span class="meta-item">🔥 Cook: ${e(r.cookTime)}</span>`:'',r.totalTime?`<span class="meta-item">⌚ Total: ${e(r.totalTime)}</span>`:'',r.servings?`<span class="meta-item">👥 ${e(r.servings)}</span>`:'',r.difficulty?`<span class="meta-item">📊 ${e(r.difficulty)}</span>`:''].filter(Boolean).join('');
   const domain=domainOf(r.url);
+
   let statusBox='';
   if(status==='error'){statusBox=`<div class="status-box status-box-err"><span>⚠️ Could not fetch this recipe automatically.</span><div class="status-actions"><button class="btn btn-ghost btn-sm" onclick="retryRecipe('${id}')">🔄 Retry</button><button class="btn btn-ghost btn-sm" onclick="closeDetail();openManualFor('${id}')">✏️ Enter Manually</button></div></div>`;}
   else if(status==='partial'){statusBox=`<div class="status-box status-box-partial"><span>⚠️ Partially fetched — missing ingredients or instructions.</span><div class="status-actions"><button class="btn btn-ghost btn-sm" onclick="retryRecipe('${id}')">🔄 Retry</button><button class="btn btn-ghost btn-sm" onclick="closeDetail();openManualFor('${id}')">✏️ Complete Manually</button></div></div>`;}
-  document.getElementById('detailBody').innerHTML=`${meta?`<div class="detail-meta">${meta}</div>`:''} ${allTags?`<div class="detail-tags">${allTags}</div>`:''} ${r.description?`<p style="font-size:14px;color:var(--text2);margin-bottom:10px;line-height:1.6;font-style:italic">${e(r.description)}</p>`:''} ${domain&&r.url?`<div class="detail-source">Source: <a href="${e(r.url)}" target="_blank" rel="noopener">${e(domain)} ↗</a></div>`:''} ${statusBox} ${status==='processing'?`<div style="text-align:center;padding:30px;color:var(--text3)">⏳ Fetching recipe data…</div>`:''} ${r.ingredients?.length?`<div class="section-gap"><div class="section-title">🧂 Ingredients</div><ul class="ing-list">${r.ingredients.map(i=>`<li><span class="ing-dot">•</span>${e(i)}</li>`).join('')}</ul></div>`:''} ${r.instructions?.length?`<div class="section-gap"><div class="section-title">📋 Instructions</div><div class="steps">${r.instructions.map((s,i)=>`<div class="step"><div class="step-num">${i+1}</div><div>${e(s)}</div></div>`).join('')}</div></div>`:''} ${r.notes?`<div class="section-gap"><div class="section-title">💡 Notes</div><div class="notes-box">${e(r.notes)}</div></div>`:''}<div class="detail-action-row"><button class="btn btn-danger btn-sm" onclick="deleteRecipe('${id}')">🗑 Delete Recipe</button></div>`;
+
+  // Dan's Comments — safe escaped existing value
+  const commentsVal=r.danComments||'';
+
+  document.getElementById('detailBody').innerHTML=`
+    ${meta?`<div class="detail-meta">${meta}</div>`:''}
+    ${allTags?`<div class="detail-tags">${allTags}</div>`:''}
+    ${r.description?`<p style="font-size:14px;color:var(--text2);margin-bottom:10px;line-height:1.6;font-style:italic">${e(r.description)}</p>`:''}
+    ${domain&&r.url?`<div class="detail-source">Source: <a href="${e(r.url)}" target="_blank" rel="noopener">${e(domain)} ↗</a></div>`:''}
+    ${statusBox}
+    ${status==='processing'?`<div style="text-align:center;padding:30px;color:var(--text3)">⏳ Fetching recipe data…</div>`:''}
+    ${r.ingredients?.length?`<div class="section-gap"><div class="section-title">🧂 Ingredients</div><ul class="ing-list">${r.ingredients.map(i=>`<li><span class="ing-dot">•</span>${e(i)}</li>`).join('')}</ul></div>`:''}
+    ${r.instructions?.length?`<div class="section-gap"><div class="section-title">📋 Instructions</div><div class="steps">${r.instructions.map((s,i)=>`<div class="step"><div class="step-num">${i+1}</div><div>${e(s)}</div></div>`).join('')}</div></div>`:''}
+    ${r.notes?`<div class="section-gap"><div class="section-title">💡 Notes</div><div class="notes-box">${e(r.notes)}</div></div>`:''}
+    <div class="section-gap dans-comments-section">
+      <div class="dans-comments-label">📝 Dan's Comments</div>
+      <textarea
+        id="dans-comments-ta"
+        class="dans-comments-textarea"
+        placeholder="Add your personal notes, tweaks, ratings, or memories about this recipe…"
+        oninput="onCommentInput('${id}')"
+      ></textarea>
+      <div id="dans-comments-saved" class="dans-comments-saved">✓ Saved</div>
+    </div>
+    <div class="detail-action-row"><button class="btn btn-danger btn-sm" onclick="deleteRecipe('${id}')">🗑 Delete Recipe</button></div>`;
+
+  // Set textarea value after render (avoids HTML-escaping issues with quotes etc.)
+  const ta=document.getElementById('dans-comments-ta');
+  if(ta)ta.value=commentsVal;
 }
 
 function openManualFor(id){
@@ -464,7 +525,9 @@ async function retryRecipe(id){
   const idx=recipes.findIndex(x=>x.id===id);
   if(idx!==-1){recipes[idx].status='processing';save();render();}
   try{
-    const updated=await fetchRecipe(r.url);updated.id=id;
+    const updated=await fetchRecipe(r.url);
+    updated.id=id;
+    updated.danComments=r.danComments||''; // preserve comments on retry
     const i2=recipes.findIndex(x=>x.id===id);
     if(i2!==-1){recipes[i2]=updated;save();render();}
     toast('Recipe saved! ✓','success');
@@ -480,12 +543,97 @@ function deleteRecipe(id){
   recipes=recipes.filter(r=>r.id!==id);save();render();closeDetail();toast('Recipe deleted');
 }
 
+async function addSingle(){
+  const url=document.getElementById('singleUrl').value.trim();
+  if(!url.startsWith('http')){toast('Please enter a valid URL','error');return;}
+  if(recipes.find(r=>r.url===url)){toast('Already in your vault','error');return;}
+  closeAdd();await processUrls([url]);
+}
+
+function queueBulk(){
+  const urls=extractUrls(document.getElementById('bulkText').value).filter(u=>!recipes.find(r=>r.url===u));
+  if(!urls.length){toast('No new valid URLs found','error');return;}
+  renderUrlQueue('bulkQueue',urls);
+  document.getElementById('bulkQueueWrap').style.display='block';
+  document.getElementById('bulkFetchBtn').textContent=`🚀 Fetch All ${urls.length} Recipes`;
+  document.getElementById('bulkFetchBtn').dataset.urls=JSON.stringify(urls);
+}
+
+async function processBulk(){const urls=JSON.parse(document.getElementById('bulkFetchBtn').dataset.urls||'[]');closeAdd();await processUrls(urls);}
+
+function handleBmFile(e){
+  const file=e.target.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const html=ev.target.result;
+    const matches=[...html.matchAll(/href=["'](https?:\/\/[^"'#\s>]+)["']/gi)];
+    const urls=[...new Set(matches.map(m=>m[1]))].filter(u=>!u.includes('apple.com')&&!u.includes('icloud.com')&&!u.includes('google.com')).filter(u=>!recipes.find(r=>r.url===u));
+    if(!urls.length){toast('No new URLs found','error');return;}
+    renderUrlQueue('importQueue',urls);
+    document.getElementById('importQueueWrap').style.display='block';
+    document.getElementById('importFetchBtn').textContent=`🚀 Import All ${urls.length} Recipes`;
+    document.getElementById('importFetchBtn').dataset.urls=JSON.stringify(urls);
+    toast(`Found ${urls.length} URLs`);
+  };
+  reader.readAsText(file);
+}
+
+async function processImport(){const urls=JSON.parse(document.getElementById('importFetchBtn').dataset.urls||'[]');closeAdd();await processUrls(urls);}
+
+async function saveManual(){
+  const title=document.getElementById('manualTitle').value.trim();
+  if(!title){toast('Please enter a title','error');return;}
+  const url=document.getElementById('manualUrl').value.trim();
+  const type=document.getElementById('manualType').value;
+  const ingredients=document.getElementById('manualIngredients').value.trim().split('\n').map(s=>s.trim()).filter(Boolean);
+  const instructions=document.getElementById('manualInstructions').value.trim().split('\n').map(s=>s.trim()).filter(Boolean);
+  const notes=document.getElementById('manualNotes').value.trim();
+  closeAdd();toast('Saving and tagging…');
+  let tags={methods:[],proteins:[],cuisines:[],diets:[],mainIngredients:[],types:type?[type]:[]};
+  try{
+    const res=await fetch('/api/fetch-recipe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url||null,manualText:`Title: ${title}\nIngredients: ${ingredients.join(', ')}\nInstructions: ${instructions.join('. ')}`,manual:true})});
+    if(res.ok){const data=await res.json();if(data.tags){tags={...tags,...data.tags};if(type)tags.types=[type,...(tags.types||[]).filter(t=>t!==type)];}}
+  }catch{}
+  const recipe={id:genId(),url:url||'',image:'',title,description:'',servings:'',prepTime:'',cookTime:'',totalTime:'',difficulty:'',ingredients,instructions,notes,danComments:'',tags,addedAt:new Date().toISOString(),status:'done',manual:true};
+  recipes.unshift(recipe);save();render();toast('Recipe saved! ✓','success');
+}
+
+async function processUrls(urls){
+  if(!urls.length)return;
+  let ok=0,fail=0,partial=0;
+  const total=urls.length;
+  const banner=document.getElementById('procBanner');
+  banner.classList.remove('hidden');
+  document.getElementById('summaryBanner').classList.add('hidden');
+  const placeholders=urls.map(url=>({id:genId(),url,title:urlToTitle(url),status:'processing',tags:{methods:[],proteins:[],cuisines:[],diets:[],mainIngredients:[],types:[]},danComments:'',addedAt:new Date().toISOString()}));
+  recipes=[...placeholders,...recipes];save();render();
+  for(let i=0;i<urls.length;i++){
+    const url=urls[i],ph=placeholders[i];
+    const pct=Math.round(((i+1)/total)*100);
+    document.getElementById('procText').textContent=`Fetching ${i+1} of ${total}…`;
+    document.getElementById('procBar').style.width=pct+'%';
+    document.getElementById('procCount').textContent=`✅ ${ok} ⚠️ ${partial} ❌ ${fail}`;
+    try{
+      const recipe=await fetchRecipe(url);recipe.id=ph.id;
+      const idx=recipes.findIndex(r=>r.id===ph.id);
+      if(idx!==-1){recipes[idx]=recipe;const s=computeStatus(recipe);if(s==='done')ok++;else if(s==='partial')partial++;else fail++;}
+    }catch{const idx=recipes.findIndex(r=>r.id===ph.id);if(idx!==-1){recipes[idx].status='error';fail++;}}
+    save();render();await sleep(300);
+  }
+  banner.classList.add('hidden');
+  const sb=document.getElementById('summaryBanner'),st=document.getElementById('summaryText');
+  if(fail===0&&partial===0){sb.className='summary-banner summary-ok';st.textContent=`✅ All ${ok} recipes saved successfully!`;}
+  else{sb.className='summary-banner summary-mixed';st.textContent=`✅ ${ok} saved ⚠️ ${partial} partial ❌ ${fail} failed — tap any card to retry or enter manually`;}
+  sb.classList.remove('hidden');
+}
+
 function exportData(){
   const blob=new Blob([JSON.stringify({version:4,exportedAt:new Date().toISOString(),recipes},null,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download=`recipe-vault-${new Date().toISOString().slice(0,10)}.json`;a.click();
   toast('Backup downloaded ✓','success');
 }
+
 function importData(evt){
   const file=evt.target.files[0];if(!file)return;
   const reader=new FileReader();
@@ -509,7 +657,9 @@ function genId(){return Math.random().toString(36).slice(2)+Date.now().toString(
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function urlToTitle(url){try{const p=new URL(url).pathname.split('/').filter(Boolean).pop()||'';return p.replace(/-/g,' ').replace(/\b\w/g,c=>c.toUpperCase()).replace(/\d+$/,'').trim()||'Recipe';}catch{return'Recipe';}}
 function toast(msg,type=''){const t=document.getElementById('toast');t.textContent=msg;t.className=`toast show toast-${type||'default'}`;clearTimeout(t._timer);t._timer=setTimeout(()=>t.classList.remove('show'),3500);}
+
 document.addEventListener('keydown',ev=>{if(ev.key==='Escape'){closeDetail();closeAdd();}});
+
 render();
 </script>
 </body>
