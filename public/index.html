@@ -105,20 +105,14 @@ body{background:var(--bg);color:var(--text);font-family:'Outfit',sans-serif;font
 .prog-bar{height:100%;background:var(--accent);border-radius:8px;transition:width .3s;width:0}
 .prog-label{font-size:11px;color:var(--text3);text-align:center}
 .detail-modal{max-width:700px}
-
-/* ── Hero image area with paste/upload support ── */
 .detail-hero{height:195px;background:var(--surface2);position:relative;border-radius:18px 18px 0 0;overflow:hidden;display:flex;align-items:center;justify-content:center}
 .detail-hero img{width:100%;height:100%;object-fit:cover}
 .detail-hero-placeholder{font-size:54px;opacity:.14}
 .hero-overlay{position:absolute;inset:0;background:linear-gradient(to top,rgba(42,34,24,.65) 0%,transparent 55%)}
 .hero-title{position:absolute;bottom:13px;left:18px;right:55px;font-family:'Lora',serif;font-size:19px;font-weight:700;color:#fff;line-height:1.3;text-shadow:0 1px 4px rgba(0,0,0,.4)}
 .hero-close{position:absolute;top:10px;right:10px;background:rgba(255,255,255,.9);border:none;border-radius:8px;width:29px;height:29px;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center}
-
-/* Image change button — always visible in bottom-left of hero */
 .hero-img-btn{position:absolute;bottom:10px;right:10px;background:rgba(255,255,255,.92);border:none;border-radius:8px;padding:5px 9px;font-size:12px;font-weight:500;color:var(--text);cursor:pointer;display:flex;align-items:center;gap:4px;z-index:2;transition:background .15s}
 .hero-img-btn:hover{background:#fff}
-
-/* Dan's Comments section */
 .dans-comments-section{margin-bottom:16px}
 .dans-comments-label{font-family:'Lora',serif;font-size:15px;font-weight:600;color:var(--text);margin-bottom:9px;display:flex;align-items:center;gap:6px}
 .dans-comments-textarea{width:100%;background:#fef9ec;border:1.5px solid #f0d98a;border-radius:10px;padding:11px 13px;font-family:'Outfit',sans-serif;font-size:14px;color:var(--text);outline:none;resize:vertical;min-height:90px;line-height:1.6;transition:border-color .15s}
@@ -126,7 +120,6 @@ body{background:var(--bg);color:var(--text);font-family:'Outfit',sans-serif;font
 .dans-comments-textarea::placeholder{color:var(--text3);font-style:italic}
 .dans-comments-saved{font-size:11px;color:#166534;margin-top:4px;opacity:0;transition:opacity .3s}
 .dans-comments-saved.show{opacity:1}
-
 .detail-body{padding:15px 20px 22px}
 .detail-meta{display:flex;flex-wrap:wrap;gap:12px;padding-bottom:11px;border-bottom:1px solid var(--border);margin-bottom:11px}
 .meta-item{font-size:13px;color:var(--text2);display:flex;align-items:center;gap:4px}
@@ -287,6 +280,47 @@ try{recipes=JSON.parse(localStorage.getItem(STORE)||'[]');}catch{}
 
 function save(){localStorage.setItem(STORE,JSON.stringify(recipes));}
 
+// ── IndexedDB for images (no size limit, persists reliably on iPad) ──────────
+let _idb=null;
+function openIDB(){
+  return new Promise((resolve,reject)=>{
+    if(_idb){resolve(_idb);return;}
+    const req=indexedDB.open('recipeVaultImages',1);
+    req.onupgradeneeded=ev=>ev.target.result.createObjectStore('images');
+    req.onsuccess=ev=>{_idb=ev.target.result;resolve(_idb);};
+    req.onerror=()=>reject(req.error);
+  });
+}
+async function idbSave(id,dataUrl){
+  const db=await openIDB();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction('images','readwrite');
+    tx.objectStore('images').put(dataUrl,id);
+    tx.oncomplete=resolve;
+    tx.onerror=()=>reject(tx.error);
+  });
+}
+async function idbGet(id){
+  const db=await openIDB();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction('images','readonly');
+    const req=tx.objectStore('images').get(id);
+    req.onsuccess=()=>resolve(req.result||null);
+    req.onerror=()=>reject(req.error);
+  });
+}
+async function idbDelete(id){
+  try{
+    const db=await openIDB();
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('images','readwrite');
+      tx.objectStore('images').delete(id);
+      tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+    });
+  }catch{}
+}
+
+// ── Status / render helpers ──────────────────────────────────────────────────
 function computeStatus(r){
   if(r.status==='processing')return'processing';
   if((r.ingredients&&r.ingredients.length>0)||(r.instructions&&r.instructions.length>0))return'done';
@@ -314,6 +348,23 @@ function applyFilters(){
   if(recipes.length===0){grid.innerHTML=`<div class="empty"><div class="empty-icon">📖</div><h3>Your vault is empty</h3><p>Click <strong>+ Add Recipe</strong> and paste a URL from any recipe website.</p><button class="btn btn-primary" onclick="openAdd()">＋ Add Your First Recipe</button></div>`;return;}
   if(filtered.length===0){grid.innerHTML=`<div class="empty"><div class="empty-icon">🔍</div><h3>No recipes match</h3><button class="btn btn-ghost" onclick="clearFilters()">Clear Filters</button></div>`;return;}
   grid.innerHTML=filtered.map(cardHTML).join('');
+  // After grid renders, load images from IndexedDB into each card
+  filtered.forEach(r=>{
+    if(r.hasImage){
+      idbGet(r.id).then(dataUrl=>{
+        if(!dataUrl)return;
+        const card=grid.querySelector(`[data-id="${r.id}"]`);
+        if(!card)return;
+        const wrap=card.querySelector('.card-img');
+        if(!wrap)return;
+        let img=wrap.querySelector('img');
+        const ph=wrap.querySelector('.card-placeholder');
+        if(ph)ph.remove();
+        if(!img){img=document.createElement('img');img.alt=r.title||'';wrap.insertBefore(img,wrap.firstChild);}
+        img.src=dataUrl;
+      }).catch(()=>{});
+    }
+  });
 }
 
 function cardHTML(r){
@@ -326,11 +377,12 @@ function cardHTML(r){
     ...(r.tags?.types||[]).slice(0,1).map(t=>`<span class="tag tt">${e(t)}</span>`),
     ...(r.tags?.mainIngredients||[]).slice(0,1).map(t=>`<span class="tag ti">${e(t)}</span>`),
   ].slice(0,4).join('');
+  // Images are loaded async from IndexedDB after render; show placeholder for now
   const img=r.image?`<img src="${e(r.image)}" alt="${e(r.title)}" onerror="this.style.display='none'">`:`<span class="card-placeholder">🍽</span>`;
   const pill=status==='processing'?`<span class="card-pill pill-proc">Processing…</span>`:status==='error'?`<span class="card-pill pill-err">Failed</span>`:status==='partial'?`<span class="card-pill pill-partial">Partial</span>`:'';
   const domain=domainOf(r.url);
   const meta=[r.totalTime?`<span>⏱ ${e(r.totalTime)}</span>`:'',r.servings?`<span>👥 ${e(r.servings)}</span>`:''].filter(Boolean).join('');
-  return`<div class="card" onclick="openDetail('${r.id}')"><div class="card-img">${img}${pill}</div><div class="card-body"><div class="card-title">${e(r.title||'Untitled Recipe')}</div>${domain?`<div class="card-domain">🔗 ${e(domain)}</div>`:''} ${tags?`<div class="card-tags">${tags}</div>`:''} ${meta?`<div class="card-meta">${meta}</div>`:''}</div></div>`;
+  return`<div class="card" data-id="${r.id}" onclick="openDetail('${r.id}')"><div class="card-img">${img}${pill}</div><div class="card-body"><div class="card-title">${e(r.title||'Untitled Recipe')}</div>${domain?`<div class="card-domain">🔗 ${e(domain)}</div>`:''} ${tags?`<div class="card-tags">${tags}</div>`:''} ${meta?`<div class="card-meta">${meta}</div>`:''}</div></div>`;
 }
 
 function buildChips(){
@@ -364,82 +416,75 @@ function switchTab(name,btn){
 function openDetail(id){currentDetailId=id;renderDetail(id);document.getElementById('detailOverlay').classList.remove('hidden');}
 function closeDetail(){document.getElementById('detailOverlay').classList.add('hidden');currentDetailId=null;}
 
-// ── IMAGE HANDLING ──────────────────────────────────────────────────────────
+// ── IMAGE HANDLING ────────────────────────────────────────────────────────────
 
 function triggerHeroImagePicker(){
   document.getElementById('heroImagePicker').click();
 }
 
-function applyImageToRecipe(base64, id){
+async function applyImageToRecipe(dataUrl, id){
+  // Save image to IndexedDB (no size limit)
+  await idbSave(id, dataUrl);
+
+  // Mark recipe as having an image (flag only — no base64 in localStorage)
   const idx=recipes.findIndex(r=>r.id===id);
   if(idx===-1)return;
-  recipes[idx].image=base64;
+  recipes[idx].hasImage=true;
+  recipes[idx].image=''; // clear any old URL-based image if present
   save();
 
-  // Directly patch the card image in the grid (fast, reliable on iPad)
+  // Update the card tile directly in the grid
   const grid=document.getElementById('grid');
-  const cards=grid.querySelectorAll('.card');
-  cards.forEach(card=>{
-    if(card.getAttribute('onclick')&&card.getAttribute('onclick').includes(id)){
-      const imgWrap=card.querySelector('.card-img');
-      if(imgWrap){
-        // Remove placeholder if present
-        const placeholder=imgWrap.querySelector('.card-placeholder');
-        if(placeholder)placeholder.remove();
-        // Update or insert the img tag
-        let img=imgWrap.querySelector('img');
-        if(img){
-          img.src=base64;
-        } else {
-          img=document.createElement('img');
-          img.alt=recipes[idx].title||'';
-          img.src=base64;
-          img.onerror=function(){this.style.display='none';};
-          imgWrap.insertBefore(img,imgWrap.firstChild);
-        }
+  const card=grid.querySelector(`[data-id="${id}"]`);
+  if(card){
+    const wrap=card.querySelector('.card-img');
+    if(wrap){
+      const ph=wrap.querySelector('.card-placeholder');
+      if(ph)ph.remove();
+      let img=wrap.querySelector('img');
+      if(!img){
+        img=document.createElement('img');
+        img.alt=recipes[idx].title||'';
+        wrap.insertBefore(img,wrap.firstChild);
       }
+      img.src=dataUrl;
     }
-  });
+  }
 
-  // Also update the hero in the detail view
-  renderDetail(id);
+  // Update the hero in the detail view
+  const hero=document.getElementById('detailHero');
+  if(hero){
+    let img=hero.querySelector('img');
+    const ph=hero.querySelector('.detail-hero-placeholder');
+    if(ph)ph.remove();
+    if(!img){
+      img=document.createElement('img');
+      img.alt=recipes[idx].title||'';
+      hero.insertBefore(img,hero.firstChild);
+    }
+    img.src=dataUrl;
+  }
 }
 
 function handleHeroImageFile(event){
   const file=event.target.files[0];
   if(!file||!currentDetailId)return;
   if(!file.type.startsWith('image/')){toast('Please select an image file','error');return;}
+  toast('Saving image…');
   const reader=new FileReader();
-  reader.onload=ev=>{
-    applyImageToRecipe(ev.target.result, currentDetailId);
-    toast('Image saved! ✓','success');
+  reader.onload=async ev=>{
+    try{
+      await applyImageToRecipe(ev.target.result, currentDetailId);
+      toast('Image saved! ✓','success');
+    }catch(err){
+      toast('Could not save image','error');
+    }
   };
   reader.readAsDataURL(file);
-  event.target.value=''; // reset so same file can be re-selected
+  event.target.value='';
 }
 
-// Paste image from clipboard (Ctrl+V / Command+V when detail is open)
-document.addEventListener('paste',function(ev){
-  if(!currentDetailId)return;
-  const items=ev.clipboardData?.items;
-  if(!items)return;
-  for(const item of items){
-    if(item.type.startsWith('image/')){
-      ev.preventDefault();
-      const file=item.getAsFile();
-      if(!file)return;
-      const reader=new FileReader();
-      reader.onload=ev2=>{
-        applyImageToRecipe(ev2.target.result, currentDetailId);
-        toast('Image pasted! ✓','success');
-      };
-      reader.readAsDataURL(file);
-      break;
-    }
-  }
-});
-
-// ── DAN'S COMMENTS ──────────────────────────────────────────────────────────
+// ── DAN'S COMMENTS ────────────────────────────────────────────────────────────
 
 function onCommentInput(id){
   clearTimeout(commentSaveTimer);
@@ -458,35 +503,37 @@ function saveComment(id){
   }
 }
 
-// ── DETAIL RENDER ───────────────────────────────────────────────────────────
-
-async function fetchRecipe(url){
-  const res=await fetch('/api/fetch-recipe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
-  if(!res.ok)throw new Error('Function call failed');
-  const data=await res.json();
-  if(!data.success)throw new Error(data.error||'Failed');
-  return{id:genId(),url,image:data.image||'',title:data.title||urlToTitle(url),description:data.description||'',servings:data.servings||'',prepTime:data.prepTime||'',cookTime:data.cookTime||'',totalTime:data.totalTime||'',difficulty:data.difficulty||'',ingredients:data.ingredients||[],instructions:data.instructions||[],notes:data.notes||'',danComments:'',tags:{methods:[],proteins:[],cuisines:[],diets:[],mainIngredients:[],types:[],...(data.tags||{})},addedAt:new Date().toISOString(),status:'done'};
-}
+// ── DETAIL RENDER ─────────────────────────────────────────────────────────────
 
 function renderDetail(id){
   const r=recipes.find(x=>x.id===id);if(!r)return;
   const status=computeStatus(r);
 
-  // ── Hero ──
+  // Hero — show URL image if present, placeholder otherwise; IDB image loaded async below
   const hero=document.getElementById('detailHero');
-  const imgHtml=r.image
-    ?`<img src="${e(r.image)}" alt="${e(r.title)}" onerror="this.style.display='none'">`
-    :`<div class="detail-hero-placeholder">🍽</div>`;
+  const imgHtml=r.image?`<img src="${e(r.image)}" alt="${e(r.title)}" onerror="this.style.display='none'">`:`<div class="detail-hero-placeholder">🍽</div>`;
   hero.innerHTML=`
     ${imgHtml}
     <div class="hero-overlay"></div>
     <div class="hero-title">${e(r.title||'Untitled Recipe')}</div>
     <button class="hero-close" onclick="closeDetail()">✕</button>
     <button class="hero-img-btn" onclick="triggerHeroImagePicker()" title="Change image">
-      📷 ${r.image?'Change photo':'Add photo'}
+      📷 ${r.hasImage||r.image?'Change photo':'Add photo'}
     </button>`;
 
-  // ── Body ──
+  // If image is stored in IndexedDB, load it into the hero
+  if(r.hasImage){
+    idbGet(id).then(dataUrl=>{
+      if(!dataUrl)return;
+      let img=hero.querySelector('img');
+      const ph=hero.querySelector('.detail-hero-placeholder');
+      if(ph)ph.remove();
+      if(!img){img=document.createElement('img');img.alt=r.title||'';hero.insertBefore(img,hero.firstChild);}
+      img.src=dataUrl;
+    }).catch(()=>{});
+  }
+
+  // Body
   const allTags=[...(r.tags?.methods||[]).map(t=>`<span class="tag tm">${e(t)}</span>`),...(r.tags?.proteins||[]).map(t=>`<span class="tag tp">${e(t)}</span>`),...(r.tags?.cuisines||[]).map(t=>`<span class="tag tc">${e(t)}</span>`),...(r.tags?.diets||[]).map(t=>`<span class="tag td">${e(t)}</span>`),...(r.tags?.types||[]).map(t=>`<span class="tag tt">${e(t)}</span>`),...(r.tags?.mainIngredients||[]).map(t=>`<span class="tag ti">${e(t)}</span>`)].join('');
   const meta=[r.prepTime?`<span class="meta-item">⏱ Prep: ${e(r.prepTime)}</span>`:'',r.cookTime?`<span class="meta-item">🔥 Cook: ${e(r.cookTime)}</span>`:'',r.totalTime?`<span class="meta-item">⌚ Total: ${e(r.totalTime)}</span>`:'',r.servings?`<span class="meta-item">👥 ${e(r.servings)}</span>`:'',r.difficulty?`<span class="meta-item">📊 ${e(r.difficulty)}</span>`:''].filter(Boolean).join('');
   const domain=domainOf(r.url);
@@ -494,9 +541,6 @@ function renderDetail(id){
   let statusBox='';
   if(status==='error'){statusBox=`<div class="status-box status-box-err"><span>⚠️ Could not fetch this recipe automatically.</span><div class="status-actions"><button class="btn btn-ghost btn-sm" onclick="retryRecipe('${id}')">🔄 Retry</button><button class="btn btn-ghost btn-sm" onclick="closeDetail();openManualFor('${id}')">✏️ Enter Manually</button></div></div>`;}
   else if(status==='partial'){statusBox=`<div class="status-box status-box-partial"><span>⚠️ Partially fetched — missing ingredients or instructions.</span><div class="status-actions"><button class="btn btn-ghost btn-sm" onclick="retryRecipe('${id}')">🔄 Retry</button><button class="btn btn-ghost btn-sm" onclick="closeDetail();openManualFor('${id}')">✏️ Complete Manually</button></div></div>`;}
-
-  // Dan's Comments — safe escaped existing value
-  const commentsVal=r.danComments||'';
 
   document.getElementById('detailBody').innerHTML=`
     ${meta?`<div class="detail-meta">${meta}</div>`:''}
@@ -510,58 +554,26 @@ function renderDetail(id){
     ${r.notes?`<div class="section-gap"><div class="section-title">💡 Notes</div><div class="notes-box">${e(r.notes)}</div></div>`:''}
     <div class="section-gap dans-comments-section">
       <div class="dans-comments-label">📝 Dan's Comments</div>
-      <textarea
-        id="dans-comments-ta"
-        class="dans-comments-textarea"
+      <textarea id="dans-comments-ta" class="dans-comments-textarea"
         placeholder="Add your personal notes, tweaks, ratings, or memories about this recipe…"
-        oninput="onCommentInput('${id}')"
-      ></textarea>
+        oninput="onCommentInput('${id}')"></textarea>
       <div id="dans-comments-saved" class="dans-comments-saved">✓ Saved</div>
     </div>
     <div class="detail-action-row"><button class="btn btn-danger btn-sm" onclick="deleteRecipe('${id}')">🗑 Delete Recipe</button></div>`;
 
-  // Set textarea value after render (avoids HTML-escaping issues with quotes etc.)
+  // Set textarea value after render
   const ta=document.getElementById('dans-comments-ta');
-  if(ta)ta.value=commentsVal;
+  if(ta)ta.value=r.danComments||'';
 }
 
-function openManualFor(id){
-  const r=recipes.find(x=>x.id===id);
-  openAdd();
-  const tabs=document.querySelectorAll('.tab');
-  switchTab('manual',tabs[3]);
-  if(r){
-    document.getElementById('manualTitle').value=r.title||'';
-    document.getElementById('manualUrl').value=r.url||'';
-    document.getElementById('manualIngredients').value=(r.ingredients||[]).join('\n');
-    document.getElementById('manualInstructions').value=(r.instructions||[]).join('\n');
-    document.getElementById('manualNotes').value=r.notes||'';
-    recipes=recipes.filter(x=>x.id!==id);save();
-  }
-}
+// ── RECIPE FETCHING & PROCESSING ──────────────────────────────────────────────
 
-async function retryRecipe(id){
-  const r=recipes.find(x=>x.id===id);if(!r||!r.url)return;
-  closeDetail();
-  const idx=recipes.findIndex(x=>x.id===id);
-  if(idx!==-1){recipes[idx].status='processing';save();render();}
-  try{
-    const updated=await fetchRecipe(r.url);
-    updated.id=id;
-    updated.danComments=r.danComments||''; // preserve comments on retry
-    const i2=recipes.findIndex(x=>x.id===id);
-    if(i2!==-1){recipes[i2]=updated;save();render();}
-    toast('Recipe saved! ✓','success');
-  }catch{
-    const i2=recipes.findIndex(x=>x.id===id);
-    if(i2!==-1){recipes[i2].status='error';save();render();}
-    toast('Retry failed','error');
-  }
-}
-
-function deleteRecipe(id){
-  if(!confirm('Delete this recipe?'))return;
-  recipes=recipes.filter(r=>r.id!==id);save();render();closeDetail();toast('Recipe deleted');
+async function fetchRecipe(url){
+  const res=await fetch('/api/fetch-recipe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+  if(!res.ok)throw new Error('Function call failed');
+  const data=await res.json();
+  if(!data.success)throw new Error(data.error||'Failed');
+  return{id:genId(),url,image:data.image||'',hasImage:false,title:data.title||urlToTitle(url),description:data.description||'',servings:data.servings||'',prepTime:data.prepTime||'',cookTime:data.cookTime||'',totalTime:data.totalTime||'',difficulty:data.difficulty||'',ingredients:data.ingredients||[],instructions:data.instructions||[],notes:data.notes||'',danComments:'',tags:{methods:[],proteins:[],cuisines:[],diets:[],mainIngredients:[],types:[],...(data.tags||{})},addedAt:new Date().toISOString(),status:'done'};
 }
 
 async function addSingle(){
@@ -615,7 +627,7 @@ async function saveManual(){
     const res=await fetch('/api/fetch-recipe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url||null,manualText:`Title: ${title}\nIngredients: ${ingredients.join(', ')}\nInstructions: ${instructions.join('. ')}`,manual:true})});
     if(res.ok){const data=await res.json();if(data.tags){tags={...tags,...data.tags};if(type)tags.types=[type,...(tags.types||[]).filter(t=>t!==type)];}}
   }catch{}
-  const recipe={id:genId(),url:url||'',image:'',title,description:'',servings:'',prepTime:'',cookTime:'',totalTime:'',difficulty:'',ingredients,instructions,notes,danComments:'',tags,addedAt:new Date().toISOString(),status:'done',manual:true};
+  const recipe={id:genId(),url:url||'',image:'',hasImage:false,title,description:'',servings:'',prepTime:'',cookTime:'',totalTime:'',difficulty:'',ingredients,instructions,notes,danComments:'',tags,addedAt:new Date().toISOString(),status:'done',manual:true};
   recipes.unshift(recipe);save();render();toast('Recipe saved! ✓','success');
 }
 
@@ -626,7 +638,7 @@ async function processUrls(urls){
   const banner=document.getElementById('procBanner');
   banner.classList.remove('hidden');
   document.getElementById('summaryBanner').classList.add('hidden');
-  const placeholders=urls.map(url=>({id:genId(),url,title:urlToTitle(url),status:'processing',tags:{methods:[],proteins:[],cuisines:[],diets:[],mainIngredients:[],types:[]},danComments:'',addedAt:new Date().toISOString()}));
+  const placeholders=urls.map(url=>({id:genId(),url,title:urlToTitle(url),status:'processing',tags:{methods:[],proteins:[],cuisines:[],diets:[],mainIngredients:[],types:[]},hasImage:false,danComments:'',addedAt:new Date().toISOString()}));
   recipes=[...placeholders,...recipes];save();render();
   for(let i=0;i<urls.length;i++){
     const url=urls[i],ph=placeholders[i];
@@ -648,6 +660,51 @@ async function processUrls(urls){
   sb.classList.remove('hidden');
 }
 
+function openManualFor(id){
+  const r=recipes.find(x=>x.id===id);
+  openAdd();
+  const tabs=document.querySelectorAll('.tab');
+  switchTab('manual',tabs[3]);
+  if(r){
+    document.getElementById('manualTitle').value=r.title||'';
+    document.getElementById('manualUrl').value=r.url||'';
+    document.getElementById('manualIngredients').value=(r.ingredients||[]).join('\n');
+    document.getElementById('manualInstructions').value=(r.instructions||[]).join('\n');
+    document.getElementById('manualNotes').value=r.notes||'';
+    recipes=recipes.filter(x=>x.id!==id);save();
+  }
+}
+
+async function retryRecipe(id){
+  const r=recipes.find(x=>x.id===id);if(!r||!r.url)return;
+  closeDetail();
+  const idx=recipes.findIndex(x=>x.id===id);
+  if(idx!==-1){recipes[idx].status='processing';save();render();}
+  try{
+    const updated=await fetchRecipe(r.url);
+    updated.id=id;
+    updated.danComments=r.danComments||'';
+    updated.hasImage=r.hasImage||false;
+    const i2=recipes.findIndex(x=>x.id===id);
+    if(i2!==-1){recipes[i2]=updated;save();render();}
+    toast('Recipe updated! ✓','success');
+  }catch{
+    const i2=recipes.findIndex(x=>x.id===id);
+    if(i2!==-1){recipes[i2].status='error';save();render();}
+    toast('Retry failed','error');
+  }
+}
+
+async function deleteRecipe(id){
+  if(!confirm('Delete this recipe?'))return;
+  recipes=recipes.filter(r=>r.id!==id);
+  save();
+  await idbDelete(id);
+  render();closeDetail();toast('Recipe deleted');
+}
+
+// ── BACKUP / RESTORE ──────────────────────────────────────────────────────────
+
 function exportData(){
   const blob=new Blob([JSON.stringify({version:4,exportedAt:new Date().toISOString(),recipes},null,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
@@ -664,6 +721,8 @@ function importData(evt){
   };
   reader.readAsText(file);evt.target.value='';
 }
+
+// ── MISC ──────────────────────────────────────────────────────────────────────
 
 const dz=document.getElementById('dropzone');
 dz.addEventListener('dragover',ev=>{ev.preventDefault();dz.classList.add('over');});
