@@ -157,6 +157,7 @@ body{background:var(--bg);color:var(--text);font-family:'Outfit',sans-serif;font
     <button class="btn btn-ghost btn-sm" onclick="exportData()">⬇ Backup</button>
     <button class="btn btn-ghost btn-sm" onclick="exportWithImages()">⬇ Full Backup</button>
     <button class="btn btn-ghost btn-sm" onclick="document.getElementById('importFile').click()">⬆ Restore</button>
+    <button class="btn btn-ghost btn-sm" onclick="openPasteRestore()">⬆ Paste Restore</button>
     <input type="file" id="importFile" accept=".json" onchange="importData(event)" style="display:none">
     <button class="btn btn-primary" onclick="openAdd()">＋ Add Recipe</button>
   </div>
@@ -269,6 +270,21 @@ body{background:var(--bg);color:var(--text);font-family:'Outfit',sans-serif;font
 <input type="file" id="heroImagePicker" accept="image/*" style="display:none" onchange="handleHeroImageFile(event)">
 
 <div class="toast toast-default" id="toast"></div>
+
+<!-- PASTE RESTORE MODAL -->
+<div class="overlay hidden" id="pasteRestoreOverlay">
+  <div class="modal">
+    <div class="modal-hd"><h3>Paste Restore</h3><button class="modal-close" onclick="closePasteRestore()">✕</button></div>
+    <div class="modal-body">
+      <p class="hint" style="margin-bottom:14px">On your laptop, open the backup JSON file in Notepad, press <strong>Ctrl+A</strong> then <strong>Ctrl+C</strong> to copy all the text. Then paste it below.</p>
+      <div class="frow">
+        <label>Paste your backup JSON here</label>
+        <textarea id="pasteRestoreText" style="min-height:200px;font-size:11px;font-family:monospace" placeholder='{"version":4,"recipes":[...]}'></textarea>
+      </div>
+      <button class="btn btn-primary" style="width:100%" onclick="processPasteRestore()">Restore from Pasted Text</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const STORE='recipeVault_v3';
@@ -754,19 +770,27 @@ function importData(evt){
   const reader=new FileReader();
   reader.onload=async ev=>{
     try{
-      const data=JSON.parse(ev.target.result);
+      let text=ev.target.result;
+      // Strip any BOM or leading whitespace that iPad might add
+      text=text.replace(/^﻿/,'').trim();
+      // Find the JSON object in case there's wrapper content
+      const start=text.indexOf('{');
+      const end=text.lastIndexOf('}');
+      if(start===-1||end===-1)throw new Error('No JSON found');
+      text=text.slice(start,end+1);
+      const data=JSON.parse(text);
+      if(!data.recipes)throw new Error('No recipes array');
       let added=0;
       let imagesRestored=0;
       for(const r of (data.recipes||[])){
         if(!recipes.find(x=>x.id===r.id||x.url===r.url)){
-          // If this recipe has embedded image data, save it to IndexedDB
           if(r.imageData){
             try{
               await idbSave(r.id, r.imageData);
               r.hasImage=true;
               imagesRestored++;
             }catch{}
-            delete r.imageData; // don't store base64 in localStorage
+            delete r.imageData;
           }
           recipes.push(r);
           added++;
@@ -778,9 +802,9 @@ function importData(evt){
         : `Imported ${added} recipes ✓`;
       toast(msg,'success');
     }
-    catch{toast('Invalid backup file','error');}
+    catch(err){toast('Import failed: '+err.message,'error');}
   };
-  reader.readAsText(file);evt.target.value='';
+  reader.readAsText(file,'utf-8');evt.target.value='';
 }
 
 // ── MISC ──────────────────────────────────────────────────────────────────────
@@ -799,7 +823,43 @@ function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function urlToTitle(url){try{const p=new URL(url).pathname.split('/').filter(Boolean).pop()||'';return p.replace(/-/g,' ').replace(/\b\w/g,c=>c.toUpperCase()).replace(/\d+$/,'').trim()||'Recipe';}catch{return'Recipe';}}
 function toast(msg,type=''){const t=document.getElementById('toast');t.textContent=msg;t.className=`toast show toast-${type||'default'}`;clearTimeout(t._timer);t._timer=setTimeout(()=>t.classList.remove('show'),3500);}
 
-document.addEventListener('keydown',ev=>{if(ev.key==='Escape'){closeDetail();closeAdd();}});
+document.addEventListener('keydown',ev=>{if(ev.key==='Escape'){closeDetail();closeAdd();closePasteRestore();}});
+
+function openPasteRestore(){document.getElementById('pasteRestoreOverlay').classList.remove('hidden');}
+function closePasteRestore(){document.getElementById('pasteRestoreOverlay').classList.add('hidden');document.getElementById('pasteRestoreText').value='';}
+
+async function processPasteRestore(){
+  const text=document.getElementById('pasteRestoreText').value.trim();
+  if(!text){toast('Please paste your backup text first','error');return;}
+  try{
+    const start=text.indexOf('{');
+    const end=text.lastIndexOf('}');
+    if(start===-1||end===-1)throw new Error('No JSON found in pasted text');
+    const json=text.slice(start,end+1);
+    const data=JSON.parse(json);
+    if(!data.recipes)throw new Error('No recipes found in backup');
+    let added=0;
+    let imagesRestored=0;
+    for(const r of data.recipes){
+      if(!recipes.find(x=>x.id===r.id||x.url===r.url)){
+        if(r.imageData){
+          try{await idbSave(r.id,r.imageData);r.hasImage=true;imagesRestored++;}catch{}
+          delete r.imageData;
+        }
+        recipes.push(r);
+        added++;
+      }
+    }
+    save();render();
+    closePasteRestore();
+    const msg=imagesRestored>0
+      ?`Restored ${added} recipes with ${imagesRestored} images ✓`
+      :`Restored ${added} recipes ✓`;
+    toast(msg,'success');
+  }catch(err){
+    toast('Restore failed: '+err.message,'error');
+  }
+}
 
 render();
 </script>
