@@ -155,6 +155,7 @@ body{background:var(--bg);color:var(--text);font-family:'Outfit',sans-serif;font
   <div class="header-right">
     <span class="badge" id="countBadge">0 recipes</span>
     <button class="btn btn-ghost btn-sm" onclick="exportData()">⬇ Backup</button>
+    <button class="btn btn-ghost btn-sm" onclick="exportWithImages()">⬇ Full Backup</button>
     <button class="btn btn-ghost btn-sm" onclick="document.getElementById('importFile').click()">⬆ Restore</button>
     <input type="file" id="importFile" accept=".json" onchange="importData(event)" style="display:none">
     <button class="btn btn-primary" onclick="openAdd()">＋ Add Recipe</button>
@@ -723,11 +724,60 @@ function exportData(){
   toast('Backup downloaded ✓','success');
 }
 
+async function exportWithImages(){
+  toast('Preparing full backup with images… this may take a moment');
+  try{
+    // Collect all images from IndexedDB
+    const recipesWithImages=await Promise.all(recipes.map(async r=>{
+      const copy={...r};
+      if(r.hasImage){
+        try{
+          const dataUrl=await idbGet(r.id);
+          if(dataUrl)copy.imageData=dataUrl;
+        }catch{}
+      }
+      return copy;
+    }));
+    const blob=new Blob([JSON.stringify({version:5,exportedAt:new Date().toISOString(),includesImages:true,recipes:recipesWithImages},null,2)],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=`recipe-vault-FULL-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    toast('Full backup with images downloaded ✓','success');
+  }catch(err){
+    toast('Export failed: '+err.message,'error');
+  }
+}
+
 function importData(evt){
   const file=evt.target.files[0];if(!file)return;
   const reader=new FileReader();
-  reader.onload=ev=>{
-    try{const data=JSON.parse(ev.target.result);let added=0;(data.recipes||[]).forEach(r=>{if(!recipes.find(x=>x.id===r.id||x.url===r.url)){recipes.push(r);added++;}});save();render();toast(`Imported ${added} recipes ✓`,'success');}
+  reader.onload=async ev=>{
+    try{
+      const data=JSON.parse(ev.target.result);
+      let added=0;
+      let imagesRestored=0;
+      for(const r of (data.recipes||[])){
+        if(!recipes.find(x=>x.id===r.id||x.url===r.url)){
+          // If this recipe has embedded image data, save it to IndexedDB
+          if(r.imageData){
+            try{
+              await idbSave(r.id, r.imageData);
+              r.hasImage=true;
+              imagesRestored++;
+            }catch{}
+            delete r.imageData; // don't store base64 in localStorage
+          }
+          recipes.push(r);
+          added++;
+        }
+      }
+      save();render();
+      const msg=imagesRestored>0
+        ? `Imported ${added} recipes with ${imagesRestored} images ✓`
+        : `Imported ${added} recipes ✓`;
+      toast(msg,'success');
+    }
     catch{toast('Invalid backup file','error');}
   };
   reader.readAsText(file);evt.target.value='';
