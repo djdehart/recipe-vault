@@ -1,6 +1,6 @@
 const https = require("https");
 const http = require("http");
- 
+
 exports.handler = async function (event) {
   const headers = {
     "Access-Control-Allow-Origin": "*",
@@ -8,11 +8,11 @@ exports.handler = async function (event) {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Content-Type": "application/json",
   };
- 
+
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers, body: "" };
   }
- 
+
   let url, manual, manualText;
   try {
     const body = JSON.parse(event.body || "{}");
@@ -22,7 +22,7 @@ exports.handler = async function (event) {
   } catch {
     return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid request" }) };
   }
- 
+
   // ── Manual entry path ─────────────────────────────────────────────────────
   if (manual && manualText) {
     try {
@@ -33,11 +33,11 @@ exports.handler = async function (event) {
       return { statusCode: 200, headers, body: JSON.stringify({ success: false, error: err.message }) };
     }
   }
- 
+
   if (!url || !url.startsWith("http")) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid URL" }) };
   }
- 
+
   // ── Fetch the page ────────────────────────────────────────────────────────
   let rawHtml = "";
   let imageUrl = "";
@@ -48,13 +48,13 @@ exports.handler = async function (event) {
   } catch (err) {
     rawHtml = "";
   }
- 
+
   // ── Approach 1: JSON-LD structured data ───────────────────────────────────
   let jsonLdRecipe = null;
   if (rawHtml) {
     jsonLdRecipe = extractJsonLd(rawHtml);
   }
- 
+
   // ── Approach 2: Raw text for Claude ───────────────────────────────────────
   const pageText = rawHtml
     ? rawHtml
@@ -65,9 +65,8 @@ exports.handler = async function (event) {
         .trim()
         .slice(0, 10000)
     : "";
- 
+
   // ── Decide what to send Claude ────────────────────────────────────────────
-  // If JSON-LD gave us ingredients AND instructions, use it directly
   if (
     jsonLdRecipe &&
     jsonLdRecipe.ingredients &&
@@ -76,17 +75,16 @@ exports.handler = async function (event) {
     jsonLdRecipe.instructions.length > 0
   ) {
     try {
-      // Still call Claude for tagging, but seed it with the clean JSON-LD data
       const seedText = `Title: ${jsonLdRecipe.title || ""}
 Description: ${jsonLdRecipe.description || ""}
 Ingredients: ${jsonLdRecipe.ingredients.join(", ")}
 Instructions: ${jsonLdRecipe.instructions.join(". ")}
 Total Time: ${jsonLdRecipe.totalTime || ""}
 Servings: ${jsonLdRecipe.servings || ""}`;
- 
+
       const aiResponse = await callClaude(buildPrompt(url, "", seedText));
       const parsed = parseJSON(aiResponse);
- 
+
       return {
         statusCode: 200, headers,
         body: JSON.stringify({
@@ -109,9 +107,8 @@ Servings: ${jsonLdRecipe.servings || ""}`;
       // Fall through to raw text approach
     }
   }
- 
+
   // ── Fall back to raw text approach ────────────────────────────────────────
-  // If JSON-LD gave us partial data, include it as a hint to Claude
   let contextText = pageText;
   if (jsonLdRecipe) {
     const hint = [
@@ -122,7 +119,7 @@ Servings: ${jsonLdRecipe.servings || ""}`;
     ].filter(Boolean).join("\n");
     if (hint) contextText = hint + "\n\n" + pageText;
   }
- 
+
   try {
     const aiResponse = await callClaude(buildPrompt(url, contextText, ""));
     const parsed = parseJSON(aiResponse);
@@ -148,7 +145,7 @@ Servings: ${jsonLdRecipe.servings || ""}`;
     return { statusCode: 200, headers, body: JSON.stringify({ success: false, error: err.message }) };
   }
 };
- 
+
 // ── JSON-LD extractor ─────────────────────────────────────────────────────────
 function extractJsonLd(html) {
   try {
@@ -163,7 +160,7 @@ function extractJsonLd(html) {
   } catch {}
   return null;
 }
- 
+
 function findRecipes(data) {
   if (!data) return [];
   if (Array.isArray(data)) return data.flatMap(findRecipes);
@@ -172,12 +169,10 @@ function findRecipes(data) {
   if (data["@graph"]) return findRecipes(data["@graph"]);
   return [];
 }
- 
+
 function normalizeRecipe(r) {
-  // Ingredients
   const ingredients = (r.recipeIngredient || []).map(i => String(i).trim()).filter(Boolean);
- 
-  // Instructions — can be string, array of strings, or array of HowToStep objects
+
   let instructions = [];
   const raw = r.recipeInstructions || [];
   if (typeof raw === "string") {
@@ -190,33 +185,25 @@ function normalizeRecipe(r) {
       return "";
     }).filter(Boolean);
   }
- 
-  // Times — ISO 8601 duration to human readable
+
   const totalTime = parseDuration(r.totalTime);
   const prepTime = parseDuration(r.prepTime);
   const cookTime = parseDuration(r.cookTime);
- 
-  // Servings
+
   const servings = r.recipeYield
     ? (Array.isArray(r.recipeYield) ? r.recipeYield[0] : r.recipeYield).toString()
     : "";
- 
-  // Image
+
   let image = "";
   if (r.image) {
     if (typeof r.image === "string") image = r.image;
     else if (r.image.url) image = r.image.url;
     else if (Array.isArray(r.image) && r.image[0]) image = typeof r.image[0] === "string" ? r.image[0] : r.image[0].url || "";
   }
- 
-  return {
-    title: r.name || "",
-    description: r.description || "",
-    ingredients, instructions,
-    totalTime, prepTime, cookTime, servings, image
-  };
+
+  return { title: r.name || "", description: r.description || "", ingredients, instructions, totalTime, prepTime, cookTime, servings, image };
 }
- 
+
 function parseDuration(iso) {
   if (!iso) return "";
   const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/i);
@@ -228,11 +215,12 @@ function parseDuration(iso) {
   if (m) return `${m} minutes`;
   return "";
 }
- 
+
 // ── Claude prompt builder ─────────────────────────────────────────────────────
 function buildPrompt(url, pageText, seedText) {
   const content = seedText || pageText || "";
   return `Extract the recipe from this webpage (URL: ${url || "unknown"}) and return ONLY valid JSON with no markdown or explanation:
+
 {
   "title": "Recipe name",
   "description": "Brief description",
@@ -253,6 +241,7 @@ function buildPrompt(url, pageText, seedText) {
     "types": []
   }
 }
+
 For tags, only pick from these values:
 - methods: slow cooker, instant pot, grill, stovetop, oven, air fryer, no-cook, smoker, pressure cooker
 - proteins: chicken, beef, pork, lamb, seafood, fish, shrimp, tofu, eggs, turkey, vegetarian, vegan
@@ -260,10 +249,12 @@ For tags, only pick from these values:
 - diets: gluten-free, dairy-free, low-carb, keto, paleo, vegetarian, vegan, whole30
 - mainIngredients: pasta, rice, potatoes, beans, mushrooms, tomatoes, cheese, bread, lentils, corn, zucchini
 - types: main dish, side dish, appetizer, dessert, beverage, cocktail, smoothie, soup, salad, breakfast, snack, sauce
+
 Only include tags that genuinely apply. Empty arrays are fine.
+
 ${content ? "Content:\n" + content : "Note: page could not be fetched. Use the URL to infer what you can."}`;
 }
- 
+
 // ── Parse Claude JSON response ────────────────────────────────────────────────
 function parseJSON(text) {
   try {
@@ -272,7 +263,7 @@ function parseJSON(text) {
   } catch {}
   return {};
 }
- 
+
 // ── Fetch page ────────────────────────────────────────────────────────────────
 function fetchUrl(url, redirectCount = 0) {
   return new Promise((resolve, reject) => {
@@ -299,7 +290,7 @@ function fetchUrl(url, redirectCount = 0) {
       res.on("end", () => {
         let image = "";
         const ogImg = data.match(/property=["']og:image["'][^>]*content=["']([^"']+)["']/i)
-                   || data.match(/content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
+          || data.match(/content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
         if (ogImg) image = ogImg[1];
         resolve({ html: data, image });
       });
@@ -308,15 +299,16 @@ function fetchUrl(url, redirectCount = 0) {
     req.on("error", reject);
   });
 }
- 
+
 // ── Call Claude API ───────────────────────────────────────────────────────────
 function callClaude(prompt) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5",
       max_tokens: 1500,
       messages: [{ role: "user", content: prompt }]
     });
+
     const req = https.request({
       hostname: "api.anthropic.com",
       path: "/v1/messages",
@@ -342,13 +334,14 @@ function callClaude(prompt) {
         }
       });
     });
+
     req.on("timeout", () => { req.destroy(); reject(new Error("Claude API timed out")); });
     req.on("error", reject);
     req.write(body);
     req.end();
   });
 }
- 
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function urlToTitle(url) {
   try {
@@ -356,4 +349,4 @@ function urlToTitle(url) {
     return p.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()).replace(/\d+$/, "").trim() || "Recipe";
   } catch { return "Recipe"; }
 }
- 
+
