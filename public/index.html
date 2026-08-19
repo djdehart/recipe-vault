@@ -569,8 +569,19 @@ function renderDetail(id){
 // ── RECIPE FETCHING & PROCESSING ──────────────────────────────────────────────
 
 async function fetchRecipe(url){
-  const res=await fetch('/api/fetch-recipe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
-  if(!res.ok)throw new Error('Function call failed');
+  const endpoint='https://recipevaultdan.netlify.app/.netlify/functions/fetch-recipe';
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),30000);
+  let res;
+  try{
+    res=await fetch(endpoint,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({url}),
+      signal:controller.signal
+    });
+  }finally{clearTimeout(timer);}
+  if(!res.ok)throw new Error('Function call failed: '+res.status);
   const data=await res.json();
   if(!data.success)throw new Error(data.error||'Failed');
   return{id:genId(),url,image:data.image||'',hasImage:false,title:data.title||urlToTitle(url),description:data.description||'',servings:data.servings||'',prepTime:data.prepTime||'',cookTime:data.cookTime||'',totalTime:data.totalTime||'',difficulty:data.difficulty||'',ingredients:data.ingredients||[],instructions:data.instructions||[],notes:data.notes||'',danComments:'',tags:{methods:[],proteins:[],cuisines:[],diets:[],mainIngredients:[],types:[],...(data.tags||{})},addedAt:new Date().toISOString(),status:'done'};
