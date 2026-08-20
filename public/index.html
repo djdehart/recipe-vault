@@ -547,7 +547,7 @@ function onCommentInput(id){
   commentSaveTimer=setTimeout(()=>saveComment(id),800);
 }
 
-async function saveComment(id){
+async async function saveComment(id){
   const ta=document.getElementById('dans-comments-ta');
   if(!ta)return;
   const idx=recipes.findIndex(r=>r.id===id);
@@ -727,7 +727,7 @@ async function processUrls(urls){
   sb.classList.remove('hidden');
 }
 
-function openManualFor(id){
+async function openManualFor(id){
   const r=recipes.find(x=>x.id===id);
   openAdd();
   const tabs=document.querySelectorAll('.tab');
