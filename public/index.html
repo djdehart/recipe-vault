@@ -826,7 +826,18 @@ async function importData(evt){
       let added=0;
       let imagesRestored=0;
       for(const r of (data.recipes||[])){
-        if(!recipes.find(x=>x.id===r.id||x.url===r.url)){
+        const existing=recipes.find(x=>x.id===r.id||x.url===r.url);
+        if(existing){
+          // Recipe already exists — restore image if present
+          if(r.imageData){
+            try{
+              await idbSave(existing.id, r.imageData);
+              existing.hasImage=true;
+              imagesRestored++;
+            }catch{}
+          }
+        } else {
+          // New recipe — add it
           if(r.imageData){
             try{
               await idbSave(r.id, r.imageData);
@@ -841,7 +852,7 @@ async function importData(evt){
       }
       await save();render();
       const msg=imagesRestored>0
-        ? `Imported ${added} recipes with ${imagesRestored} images ✓`
+        ? `Imported ${added} recipes, restored ${imagesRestored} images ✓`
         : `Imported ${added} recipes ✓`;
       toast(msg,'success');
     }
@@ -884,7 +895,12 @@ async function processPasteRestore(){
     let added=0;
     let imagesRestored=0;
     for(const r of data.recipes){
-      if(!recipes.find(x=>x.id===r.id||x.url===r.url)){
+      const existing=recipes.find(x=>x.id===r.id||x.url===r.url);
+      if(existing){
+        if(r.imageData){
+          try{await idbSave(existing.id,r.imageData);existing.hasImage=true;imagesRestored++;}catch{}
+        }
+      } else {
         if(r.imageData){
           try{await idbSave(r.id,r.imageData);r.hasImage=true;imagesRestored++;}catch{}
           delete r.imageData;
