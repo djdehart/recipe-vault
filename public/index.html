@@ -806,19 +806,23 @@ async function exportWithImages(){
 
 function importData(evt){
   const file=evt.target.files[0];if(!file)return;
+  toast('Reading file: '+file.name+' ('+Math.round(file.size/1024)+'KB)');
   const reader=new FileReader();
+  reader.onerror=()=>toast('File read error: '+reader.error,'error');
   reader.onload=async ev=>{
     try{
       let text=ev.target.result;
+      if(!text||text.length===0)throw new Error('File was empty or unreadable');
+      toast('File read OK: '+text.length+' chars — parsing…');
       // Strip any BOM or leading whitespace that iPad might add
       text=text.replace(/^﻿/,'').trim();
       // Find the JSON object in case there's wrapper content
       const start=text.indexOf('{');
       const end=text.lastIndexOf('}');
-      if(start===-1||end===-1)throw new Error('No JSON found');
+      if(start===-1||end===-1)throw new Error('No JSON found in '+text.length+' chars');
       text=text.slice(start,end+1);
       const data=JSON.parse(text);
-      if(!data.recipes)throw new Error('No recipes array');
+      if(!data.recipes)throw new Error('No recipes array found');
       let added=0;
       let imagesRestored=0;
       for(const r of (data.recipes||[])){
