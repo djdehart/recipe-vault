@@ -522,7 +522,7 @@ async function applyImageToRecipe(dataUrl, id){
   }
 }
 
-function handleHeroImageFile(event){
+async function handleHeroImageFile(event){
   const file=event.target.files[0];
   if(!file||!currentDetailId)return;
   if(!file.type.startsWith('image/')){toast('Please select an image file','error');return;}
@@ -547,7 +547,7 @@ function onCommentInput(id){
   commentSaveTimer=setTimeout(()=>saveComment(id),800);
 }
 
-async async function saveComment(id){
+async function saveComment(id){
   const ta=document.getElementById('dans-comments-ta');
   if(!ta)return;
   const idx=recipes.findIndex(r=>r.id===id);
@@ -804,7 +804,7 @@ async function exportWithImages(){
   }
 }
 
-function importData(evt){
+async function importData(evt){
   const file=evt.target.files[0];if(!file)return;
   toast('Reading file: '+file.name+' ('+Math.round(file.size/1024)+'KB)');
   const reader=new FileReader();
