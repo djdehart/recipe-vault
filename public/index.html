@@ -287,27 +287,66 @@ body{background:var(--bg);color:var(--text);font-family:'Outfit',sans-serif;font
 </div>
 
 <script>
-const STORE='recipeVault_v3';
 let recipes=[];
 let filters={methods:null,proteins:null,cuisines:null,diets:null,mainIngredients:null,types:null,websites:null};
 let currentDetailId=null;
 let commentSaveTimer=null;
 
-try{recipes=JSON.parse(localStorage.getItem(STORE)||'[]');}catch{}
-
-function save(){localStorage.setItem(STORE,JSON.stringify(recipes));}
-
-// ── IndexedDB for images (no size limit, persists reliably on iPad) ──────────
+// ── IndexedDB — single DB for both recipes and images ────────────────────────
 let _idb=null;
 function openIDB(){
   return new Promise((resolve,reject)=>{
     if(_idb){resolve(_idb);return;}
-    const req=indexedDB.open('recipeVaultImages',1);
-    req.onupgradeneeded=ev=>ev.target.result.createObjectStore('images');
+    const req=indexedDB.open('recipeVault',2);
+    req.onupgradeneeded=ev=>{
+      const db=ev.target.result;
+      if(!db.objectStoreNames.contains('images'))db.createObjectStore('images');
+      if(!db.objectStoreNames.contains('recipes'))db.createObjectStore('recipes');
+    };
     req.onsuccess=ev=>{_idb=ev.target.result;resolve(_idb);};
     req.onerror=()=>reject(req.error);
   });
 }
+
+// ── Recipe storage (IndexedDB) ────────────────────────────────────────────────
+async function save(){
+  const db=await openIDB();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction('recipes','readwrite');
+    const store=tx.objectStore('recipes');
+    store.put(JSON.stringify(recipes),'all');
+    tx.oncomplete=resolve;
+    tx.onerror=()=>reject(tx.error);
+  });
+}
+
+async function loadRecipes(){
+  try{
+    const db=await openIDB();
+    const data=await new Promise((resolve,reject)=>{
+      const tx=db.transaction('recipes','readonly');
+      const req=tx.objectStore('recipes').get('all');
+      req.onsuccess=()=>resolve(req.result||null);
+      req.onerror=()=>reject(req.error);
+    });
+    if(data){
+      recipes=JSON.parse(data);
+    } else {
+      // Migrate from localStorage if exists
+      const legacy=localStorage.getItem('recipeVault_v3');
+      if(legacy){
+        recipes=JSON.parse(legacy);
+        await save(); // save to IndexedDB
+        localStorage.removeItem('recipeVault_v3'); // clean up
+      }
+    }
+  }catch(e){
+    console.error('Failed to load recipes:',e);
+    recipes=[];
+  }
+}
+
+// ── Image storage (IndexedDB) ─────────────────────────────────────────────────
 async function idbSave(id,dataUrl){
   const db=await openIDB();
   return new Promise((resolve,reject)=>{
@@ -448,7 +487,7 @@ async function applyImageToRecipe(dataUrl, id){
   if(idx===-1)return;
   recipes[idx].hasImage=true;
   recipes[idx].image=''; // clear any old URL-based image if present
-  save();
+  await save();
 
   // Update the card tile directly in the grid
   const grid=document.getElementById('grid');
@@ -508,13 +547,13 @@ function onCommentInput(id){
   commentSaveTimer=setTimeout(()=>saveComment(id),800);
 }
 
-function saveComment(id){
+async function saveComment(id){
   const ta=document.getElementById('dans-comments-ta');
   if(!ta)return;
   const idx=recipes.findIndex(r=>r.id===id);
   if(idx!==-1){
     recipes[idx].danComments=ta.value;
-    save();
+    await save();
     const saved=document.getElementById('dans-comments-saved');
     if(saved){saved.classList.add('show');setTimeout(()=>saved.classList.remove('show'),2000);}
   }
@@ -656,7 +695,7 @@ async function saveManual(){
     if(res.ok){const data=await res.json();if(data.tags){tags={...tags,...data.tags};if(type)tags.types=[type,...(tags.types||[]).filter(t=>t!==type)];}}
   }catch{}
   const recipe={id:genId(),url:url||'',image:'',hasImage:false,title,description:'',servings:'',prepTime:'',cookTime:'',totalTime:'',difficulty:'',ingredients,instructions,notes,danComments:'',tags,addedAt:new Date().toISOString(),status:'done',manual:true};
-  recipes.unshift(recipe);save();render();toast('Recipe saved! ✓','success');
+  recipes.unshift(recipe);await save();render();toast('Recipe saved! ✓','success');
 }
 
 async function processUrls(urls){
@@ -667,7 +706,7 @@ async function processUrls(urls){
   banner.classList.remove('hidden');
   document.getElementById('summaryBanner').classList.add('hidden');
   const placeholders=urls.map(url=>({id:genId(),url,title:urlToTitle(url),status:'processing',tags:{methods:[],proteins:[],cuisines:[],diets:[],mainIngredients:[],types:[]},hasImage:false,danComments:'',addedAt:new Date().toISOString()}));
-  recipes=[...placeholders,...recipes];save();render();
+  recipes=[...placeholders,...recipes];await save();render();
   for(let i=0;i<urls.length;i++){
     const url=urls[i],ph=placeholders[i];
     const pct=Math.round(((i+1)/total)*100);
@@ -679,7 +718,7 @@ async function processUrls(urls){
       const idx=recipes.findIndex(r=>r.id===ph.id);
       if(idx!==-1){recipes[idx]=recipe;const s=computeStatus(recipe);if(s==='done')ok++;else if(s==='partial')partial++;else fail++;}
     }catch{const idx=recipes.findIndex(r=>r.id===ph.id);if(idx!==-1){recipes[idx].status='error';fail++;}}
-    save();render();await sleep(300);
+    await save();render();await sleep(300);
   }
   banner.classList.add('hidden');
   const sb=document.getElementById('summaryBanner'),st=document.getElementById('summaryText');
@@ -699,7 +738,7 @@ function openManualFor(id){
     document.getElementById('manualIngredients').value=(r.ingredients||[]).join('\n');
     document.getElementById('manualInstructions').value=(r.instructions||[]).join('\n');
     document.getElementById('manualNotes').value=r.notes||'';
-    recipes=recipes.filter(x=>x.id!==id);save();
+    recipes=recipes.filter(x=>x.id!==id);await save();
   }
 }
 
@@ -707,18 +746,18 @@ async function retryRecipe(id){
   const r=recipes.find(x=>x.id===id);if(!r||!r.url)return;
   closeDetail();
   const idx=recipes.findIndex(x=>x.id===id);
-  if(idx!==-1){recipes[idx].status='processing';save();render();}
+  if(idx!==-1){recipes[idx].status='processing';await save();render();}
   try{
     const updated=await fetchRecipe(r.url);
     updated.id=id;
     updated.danComments=r.danComments||'';
     updated.hasImage=r.hasImage||false;
     const i2=recipes.findIndex(x=>x.id===id);
-    if(i2!==-1){recipes[i2]=updated;save();render();}
+    if(i2!==-1){recipes[i2]=updated;await save();render();}
     toast('Recipe updated! ✓','success');
   }catch{
     const i2=recipes.findIndex(x=>x.id===id);
-    if(i2!==-1){recipes[i2].status='error';save();render();}
+    if(i2!==-1){recipes[i2].status='error';await save();render();}
     toast('Retry failed','error');
   }
 }
@@ -726,7 +765,7 @@ async function retryRecipe(id){
 async function deleteRecipe(id){
   if(!confirm('Delete this recipe?'))return;
   recipes=recipes.filter(r=>r.id!==id);
-  save();
+  await save();
   await idbDelete(id);
   render();closeDetail();toast('Recipe deleted');
 }
@@ -796,7 +835,7 @@ function importData(evt){
           added++;
         }
       }
-      save();render();
+      await save();render();
       const msg=imagesRestored>0
         ? `Imported ${added} recipes with ${imagesRestored} images ✓`
         : `Imported ${added} recipes ✓`;
@@ -850,7 +889,7 @@ async function processPasteRestore(){
         added++;
       }
     }
-    save();render();
+    await save();render();
     closePasteRestore();
     const msg=imagesRestored>0
       ?`Restored ${added} recipes with ${imagesRestored} images ✓`
@@ -861,7 +900,11 @@ async function processPasteRestore(){
   }
 }
 
-render();
+// ── Initialize app ────────────────────────────────────────────────────────────
+(async()=>{
+  await loadRecipes();
+  render();
+})();
 </script>
 </body>
 </html>
